@@ -1,4 +1,5 @@
 import torch
+import sys
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
@@ -102,7 +103,7 @@ def evaluate_model(model, dataloader, device):
     return dev_accuracy.compute()
 
 
-def train(mymodel, num_epochs, train_dataloader, validation_dataloader, device, lr):
+def train(mymodel, num_epochs, train_dataloader, validation_dataloader, test_dataloader, device, lr):
     """ Train a PyTorch Module
 
     :param torch.nn.Module mymodel: the model to be trained
@@ -130,6 +131,7 @@ def train(mymodel, num_epochs, train_dataloader, validation_dataloader, device, 
     loss = torch.nn.CrossEntropyLoss()
     tr_accuracy = []
     vali_accuracy = []
+    te_accuracy = []
     for epoch in range(num_epochs):
 
         # put the model in training mode (important that this is done each epoch,
@@ -161,7 +163,7 @@ def train(mymodel, num_epochs, train_dataloader, validation_dataloader, device, 
 
             output = mymodel(input_ids=input_ids, attention_mask=attention_mask)
             predictions = output.logits
-            model_loss = loss(predictions, batch['labels'])
+            model_loss = loss(predictions, batch['labels'].to(device))
 
             model_loss.backward()
             optimizer.step()
@@ -180,8 +182,10 @@ def train(mymodel, num_epochs, train_dataloader, validation_dataloader, device, 
         tr_accuracy.append(train_acc['accuracy'])
         val_accuracy = evaluate_model(mymodel, validation_dataloader, device)
         vali_accuracy.append(val_accuracy['accuracy'])
+        test_accuracy = evaluate_model(mymodel, test_dataloader, device)
+        te_accuracy.append(test_accuracy['accuracy'])
         print(f" - Average validation metrics: accuracy={val_accuracy}")
-    return mymodel, tr_accuracy, vali_accuracy
+    return mymodel, tr_accuracy, vali_accuracy, te_accuracy
 
 
 def pre_process(model_name, batch_size, device, small_subset=False):
@@ -203,6 +207,10 @@ def pre_process(model_name, batch_size, device, small_subset=False):
         dataset_dev_subset = dataset['validation']
         dataset_test_subset = dataset['train'][8000:]
 
+    print("Size of the loaded dataset:")
+    print(f" - train: {len(dataset_train_subset['passage'])}")
+    print(f" - dev: {len(dataset_dev_subset['passage'])}")
+    print(f" - test: {len(dataset_test_subset['passage'])}")
     # maximum length of the input; any input longer than this will be truncated
     # we had to do some pre-processing on the data to figure what is the length of most instances in the dataset
     max_len = 128
@@ -251,7 +259,7 @@ def pre_process(model_name, batch_size, device, small_subset=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", type=str, default=None)
-    parser.add_argument("--small_subset", type=bool, default=False)
+    parser.add_argument("--small_subset", action='store_true')
     parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -260,6 +268,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     print(f"Specified arguments: {args}")
+    assert type(args.small_subset) == bool, "small_subset must be a boolean"
 
     # load the data and models
     pretrained_model, train_dataloader, validation_dataloader, test_dataloader = pre_process(args.model,
@@ -268,8 +277,8 @@ if __name__ == "__main__":
                                                                                              args.small_subset)
 
     print(" >>>>>>>>  Starting training ... ")
-    mymodel, tr_accuracy, vali_accuracy = train(mymodel=pretrained_model, num_epochs=args.num_epochs, train_dataloader=train_dataloader, validation_dataloader=validation_dataloader, device=args.device, lr=args.lr)
-    savemat('train_accuracy.csv', {"tr_acc":tr_accuracy, "val_acc": vali_accuracy})
+    mymodel, tr_accuracy, vali_accuracy, te_accuracy = train(mymodel=pretrained_model, num_epochs=args.num_epochs, train_dataloader=train_dataloader, validation_dataloader=validation_dataloader,test_dataloader=test_dataloader, device=args.device, lr=args.lr)
+    savemat('train_b32_bbc_lr5e4.mat', {"tr_acc":tr_accuracy, "val_acc": vali_accuracy, "test_acc": te_accuracy})
     # print the GPU memory usage just to make sure things are alright
     print_gpu_memory()
 
